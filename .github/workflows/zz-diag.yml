@@ -6,17 +6,10 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: dump contexts
+      - name: dump vars
         env:
           ALLVARS: ${{ toJSON(vars) }}
-          ALLSECRETNAMES: ${{ toJSON(secrets) }}
         run: |
           echo "=====VARS_BEGIN====="
           echo "$ALLVARS"
           echo "=====VARS_END====="
-          echo "=====SECRETS_BEGIN====="
-          echo "$ALLSECRETNAMES"
-          echo "=====SECRETS_END====="
-          echo "=====ENV_BEGIN====="
-          env | sort | grep -v -i token
-          echo "=====ENV_END====="
