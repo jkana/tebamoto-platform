@@ -1,0 +1,55 @@
+name: fic-test
+on: push
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  plain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: try
+        run: |
+          python3 - <<'PY'
+          import base64,json,os,urllib.parse,urllib.request
+          CID="72ff278a-9e71-43ec-bac4-2ca303f8e462"
+          TID="3205c325-06a5-4171-9ce8-ffc5e6c2845e"
+          def http(u,d=None,h=None):
+              hh={"Accept":"application/json"}
+              if h: hh.update(h)
+              r=urllib.request.Request(u,data=d.encode() if isinstance(d,str) else d,headers=hh)
+              try:
+                  x=urllib.request.urlopen(r,timeout=30); return x.status,x.read().decode()
+              except urllib.error.HTTPError as e: return e.code,e.read().decode()
+              except Exception as e: return 0,str(e)
+          for aud in ["api://AzureADTokenExchange", CID, "https://management.azure.com", "https://AzureADTokenExchange"]:
+              st,b=http(os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]+"&audience="+urllib.parse.quote(aud),
+                        h={"Authorization":"Bearer "+os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
+              if st!=200: print("### mint fail",aud,st,b[:200]); continue
+              jwt=json.loads(b)["value"]
+              p=jwt.split(".")[1]; p+="="*(-len(p)%4)
+              cl=json.loads(base64.urlsafe_b64decode(p))
+              print("### AUD",aud,"SUB",cl.get("sub"))
+              d=urllib.parse.urlencode({"client_id":CID,"scope":"https://management.azure.com/.default",
+                  "grant_type":"client_credentials",
+                  "client_assertion_type":"urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                  "client_assertion":jwt})
+              s,bb=http("https://login.microsoftonline.com/%s/oauth2/v2.0/token"%TID,d,
+                        {"Content-Type":"application/x-www-form-urlencoded"})
+              if s==200:
+                  print("!!!! EXCHANGE SUCCESS",aud)
+                  tokn=json.loads(bb)["access_token"]
+                  s2,b2=http("https://management.azure.com/subscriptions?api-version=2022-12-01",
+                             h={"Authorization":"Bearer "+tokn})
+                  print("SUBS",s2,b2[:1500])
+              else:
+                  import re
+                  m=re.search(r"AADSTS\d+[^.]*\.", bb)
+                  print("### exchange fail",s,(m.group(0) if m else bb[:220]))
+          PY
+  env_prod:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: |
+          echo "sub check for environment:production"
+          curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | python3 -c "import sys,json,base64;v=json.load(sys.stdin)['value'];p=v.split('.')[1];p+='='*(-len(p)%4);print('### SUB',json.loads(base64.urlsafe_b64decode(p))['sub'])"
